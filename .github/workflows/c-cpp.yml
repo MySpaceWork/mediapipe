@@ -1,0 +1,56 @@
+name: Build Box Tracking Demo
+
+on:
+  push:
+    branches: ['*']
+    paths:
+      - 'box_tracking_demo/**'
+      - '.github/workflows/build-box-tracking-demo.yml'
+  pull_request:
+    paths:
+      - 'box_tracking_demo/**'
+      - '.github/workflows/build-box-tracking-demo.yml'
+
+jobs:
+  build-ubuntu:
+    runs-on: ubuntu-22.04
+    strategy:
+      matrix:
+        build_type: [Release, Debug]
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Install dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y \
+            cmake \
+            g++ \
+            libopencv-dev
+
+      - name: Configure CMake
+        working-directory: box_tracking_demo
+        run: |
+          mkdir build
+          cd build
+          cmake .. -DCMAKE_BUILD_TYPE=${{ matrix.build_type }}
+
+      - name: Build
+        working-directory: box_tracking_demo/build
+        run: make -j$(nproc)
+
+      - name: Verify binary exists
+        working-directory: box_tracking_demo/build
+        run: |
+          ls -la box_tracking_demo
+          file box_tracking_demo
+
+      - name: Upload build artifact
+        if: matrix.build_type == 'Release'
+        uses: actions/upload-artifact@v4
+        with:
+          name: box_tracking_demo-ubuntu-22.04
+          path: box_tracking_demo/build/box_tracking_demo
+          retention-days: 30
