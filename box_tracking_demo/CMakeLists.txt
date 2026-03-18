@@ -7,7 +7,7 @@ set(CMAKE_CXX_STANDARD_REQUIRED ON)
 # ===========================================================================
 # Find OpenCV -- the only external dependency.
 # ===========================================================================
-find_package(OpenCV REQUIRED COMPONENTS core imgproc video highgui videoio calib3d)
+find_package(OpenCV 4 REQUIRED COMPONENTS core imgproc video highgui videoio calib3d)
 message(STATUS "OpenCV version: ${OpenCV_VERSION}")
 message(STATUS "OpenCV include: ${OpenCV_INCLUDE_DIRS}")
 message(STATUS "OpenCV libs:    ${OpenCV_LIBS}")
