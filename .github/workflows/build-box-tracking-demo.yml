@@ -27,7 +27,7 @@ jobs:
             cmake g++ pkg-config \
             libgtk-3-dev \
             libavcodec-dev libavformat-dev libswscale-dev \
-            libjpeg-dev libpng-dev libtiff-dev \
+            libjpeg-dev libpng-dev \
             zlib1g-dev
 
       - name: Cache OpenCV static build
@@ -35,7 +35,7 @@ jobs:
         uses: actions/cache@v4
         with:
           path: /opt/opencv-static
-          key: opencv-4.10.0-static-ubuntu22.04-v2-no-protobuf
+          key: opencv-4.10.0-static-ubuntu22.04-v3-no-dnn-no-protobuf
 
       - name: Build OpenCV from source (static)
         if: steps.cache-opencv.outputs.cache-hit != 'true'
@@ -53,18 +53,21 @@ jobs:
             -DBUILD_opencv_apps=OFF \
             -DBUILD_opencv_python2=OFF \
             -DBUILD_opencv_python3=OFF \
+            -DBUILD_opencv_dnn=OFF \
             -DBUILD_PROTOBUF=OFF \
             -DWITH_PROTOBUF=OFF \
             -DWITH_GTK=ON \
             -DWITH_FFMPEG=ON \
             -DWITH_JPEG=ON \
             -DWITH_PNG=ON \
-            -DWITH_TIFF=ON \
+            -DWITH_TIFF=OFF \
             -DWITH_V4L=OFF \
             -DWITH_QT=OFF \
             -DWITH_OPENEXR=OFF \
             -DWITH_GSTREAMER=OFF \
             -DWITH_1394=OFF \
+            -DWITH_OPENCL=OFF \
+            -DWITH_LAPACK=OFF \
             -DOPENCV_GENERATE_PKGCONFIG=ON \
             -DINSTALL_CREATE_DISTRIB=ON
           make -j$(nproc)
