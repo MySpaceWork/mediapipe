@@ -35,7 +35,7 @@ jobs:
         uses: actions/cache@v4
         with:
           path: /opt/opencv-static
-          key: opencv-4.10.0-static-ubuntu22.04-v3-no-dnn-no-protobuf
+          key: opencv-4.10.0-static-ubuntu22.04-v4-minimal
 
       - name: Build OpenCV from source (static)
         if: steps.cache-opencv.outputs.cache-hit != 'true'
@@ -54,8 +54,10 @@ jobs:
             -DBUILD_opencv_python2=OFF \
             -DBUILD_opencv_python3=OFF \
             -DBUILD_opencv_dnn=OFF \
+            -DBUILD_opencv_gapi=OFF \
             -DBUILD_PROTOBUF=OFF \
             -DWITH_PROTOBUF=OFF \
+            -DWITH_ADE=OFF \
             -DWITH_GTK=ON \
             -DWITH_FFMPEG=ON \
             -DWITH_JPEG=ON \
@@ -72,6 +74,11 @@ jobs:
             -DINSTALL_CREATE_DISTRIB=ON
           make -j$(nproc)
           sudo make install
+          # Copy 3rdparty static libs that OpenCV references but doesn't install
+          sudo mkdir -p /opt/opencv-static/lib/opencv4/3rdparty
+          sudo cp -v /tmp/opencv-build/3rdparty/lib/*.a /opt/opencv-static/lib/opencv4/3rdparty/ 2>/dev/null || true
+          echo "--- Installed 3rdparty libs ---"
+          ls -la /opt/opencv-static/lib/opencv4/3rdparty/ 2>/dev/null || echo "No 3rdparty dir"
 
       - name: Configure CMake (static build)
         working-directory: box_tracking_demo
