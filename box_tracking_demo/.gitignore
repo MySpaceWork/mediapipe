@@ -1,0 +1,7 @@
+build/
+cmake-build-*/
+.vscode/
+*.o
+*.a
+*.so
+box_tracking_demo
