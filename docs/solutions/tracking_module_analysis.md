@@ -310,3 +310,157 @@ Frame N-1, Frame N
 5. **Bidirectional tracking**: Tracking runs both forward and backward from the initial position, maximizing the tracked time range.
 
 6. **Streaming architecture**: Chunk-based data organization supports both offline batch processing and online streaming use cases.
+
+---
+
+## Porting to RISC-V and Embedded Devices
+
+### Dependency Analysis
+
+The tracking module's external dependencies are:
+
+| Dependency | Usage in Tracking | RISC-V Status |
+|---|---|---|
+| **OpenCV** (core, imgproc, video, calib3d, features2d) | KLT optical flow, image pyramids, findHomography, solvePnP, feature detection | Officially supports RISC-V since 4.x; cross-compile with CMake toolchain |
+| **Eigen** | SVD decomposition, matrix operations in tracking.cc | Header-only, fully portable, no platform-specific code needed |
+| **Protobuf** (or protobuf-lite) | All configuration and data serialization (.proto files) | Cross-compiles cleanly for RISC-V |
+| **Abseil (absl)** | Mutexes, containers, string utilities | Cross-compiles for RISC-V; threading support depends on OS |
+| **Bazel** | Build system | Supports RISC-V cross-compilation via custom toolchain rules |
+
+**Good news**: The tracking module code itself contains **zero platform-specific SIMD intrinsics** (no SSE, NEON, or other architecture-specific code). All vectorization happens inside OpenCV, which handles RISC-V Vector (RVV) extensions internally.
+
+### Porting Strategy
+
+#### Step 1: Cross-compilation Toolchain
+
+Set up a Bazel RISC-V cross-compilation toolchain:
+
+```python
+# In a WORKSPACE or .bazelrc addition
+# Point to riscv64-unknown-linux-gnu-gcc / g++ toolchain
+platform(
+    name = "riscv64_linux",
+    constraint_values = [
+        "@platforms//os:linux",
+        "@platforms//cpu:riscv64",
+    ],
+)
+```
+
+Use `--platforms=//platforms:riscv64_linux` and a matching `cc_toolchain` definition pointing to the RISC-V GCC or Clang cross-compiler.
+
+#### Step 2: OpenCV for RISC-V
+
+The biggest dependency. Two approaches:
+
+**Option A: Cross-compile OpenCV from source**
+```bash
+cmake -DCMAKE_TOOLCHAIN_FILE=riscv64-toolchain.cmake \
+      -DWITH_V4L=OFF -DWITH_GTK=OFF -DWITH_QT=OFF \
+      -DBUILD_TESTS=OFF -DBUILD_PERF_TESTS=OFF \
+      -DBUILD_opencv_python=OFF \
+      -DCPU_RVV=ON \
+      ..
+```
+
+Key flags:
+- Disable GUI/display modules (not needed for tracking).
+- Enable `CPU_RVV=ON` if the target chip supports RISC-V Vector extensions (e.g., C906, C910, T-Head).
+- Only build needed modules: `core`, `imgproc`, `video`, `calib3d`, `features2d`.
+
+**Option B: Use pre-built OpenCV from a RISC-V Linux distribution** (e.g., Debian RISC-V port, or Buildroot/Yocto recipe).
+
+Then modify `third_party/opencv_linux.BUILD` to point to RISC-V library paths:
+```python
+cc_library(
+    name = "opencv",
+    srcs = glob([
+        "lib/riscv64-linux-gnu/libopencv_core.so",
+        "lib/riscv64-linux-gnu/libopencv_calib3d.so",
+        "lib/riscv64-linux-gnu/libopencv_features2d.so",
+        "lib/riscv64-linux-gnu/libopencv_imgproc.so",
+        "lib/riscv64-linux-gnu/libopencv_video.so",
+    ]),
+    # ... headers remain the same
+)
+```
+
+#### Step 3: Protobuf and Abseil
+
+Both libraries cross-compile without issues:
+
+```bash
+# Protobuf
+cmake -DCMAKE_TOOLCHAIN_FILE=riscv64-toolchain.cmake \
+      -Dprotobuf_BUILD_TESTS=OFF ..
+
+# Abseil
+cmake -DCMAKE_TOOLCHAIN_FILE=riscv64-toolchain.cmake \
+      -DABSL_PROPAGATE_CXX_STD=ON ..
+```
+
+For memory-constrained devices, use **protobuf-lite** instead of full protobuf. MediaPipe already supports this via the `portable_proto` build config.
+
+#### Step 4: Threading Considerations
+
+The tracking module uses threading in two places:
+
+1. **`BoxTracker`** uses `ThreadPool` for asynchronous bidirectional tracking.
+2. **`ParallelInvoker`** (`parallel_invoker.h`) provides parallel for-loop execution.
+
+For single-core RISC-V MCUs (e.g., ESP32-C3, BL602):
+- Disable `PARALLEL_INVOKER_ACTIVE` -- the module gracefully falls back to sequential execution.
+- `BoxTracker`'s thread pool size can be set to 1 in `BoxTrackerOptions`.
+
+For multi-core RISC-V (e.g., SiFive U74, T-Head C910):
+- Standard pthreads work fine; no changes needed.
+
+#### Step 5: Performance Optimization on RISC-V
+
+Since the tracking code has no SIMD intrinsics, performance depends primarily on:
+
+1. **OpenCV's RISC-V optimization**: OpenCV 4.x supports RVV (RISC-V Vector extension). If your chip supports RVV 0.7+ or 1.0, enable it in OpenCV's build. This accelerates `calcOpticalFlowPyrLK`, `findHomography`, and image processing primitives.
+
+2. **Eigen optimizations**: Eigen auto-vectorizes with compiler flags. Use `-march=rv64gcv` (with V extension) or at minimum `-O2` for decent performance.
+
+3. **Algorithmic simplifications for constrained devices**:
+   - Reduce `pyramid_levels` in KLT (e.g., from 3 to 2) to cut memory and compute.
+   - Lower `ransac_rounds_per_region` (e.g., from 10 to 5).
+   - Use `TRACKING_DEGREE_TRANSLATION` instead of similarity/homography for simpler, faster object tracking.
+   - Reduce feature grid density in `RegionFlowComputationOptions`.
+   - Decrease `irls_iterations` (e.g., from 10 to 5) in `TrackStepOptions`.
+   - Use `protobuf-lite` and disable features like `motion_saliency` that aren't strictly needed.
+
+4. **Memory footprint reduction**:
+   - Use `FlowPackager` with 8-bit compression (`high_fidelity_16bit_encode = false`) to halve flow data storage.
+   - Reduce `TrackingDataChunk` cache sizes in `BoxTrackerOptions`.
+   - Process at reduced resolution (the pipeline naturally supports downscaling via `RegionFlowComputationOptions`).
+
+#### Step 6: Minimal Tracking-only Build
+
+For the smallest possible footprint, build only the tracking subset:
+
+```
+# Bazel targets needed for tracking only:
+//mediapipe/util/tracking:tracking
+//mediapipe/util/tracking:box_tracker
+//mediapipe/util/tracking:flow_packager
+//mediapipe/util/tracking:region_flow_computation  # only if computing flow on-device
+```
+
+If optical flow is computed on a separate host and only `TrackingData` chunks are sent to the RISC-V device, you can skip `region_flow_computation` and its OpenCV `video` module dependency entirely. This dramatically reduces the footprint -- the `MotionBox` + `BoxTracker` core needs only Eigen, protobuf-lite, and abseil.
+
+### Summary: Porting Difficulty Assessment
+
+| Component | Porting Difficulty | Notes |
+|---|---|---|
+| Core tracking logic (`MotionBox`, `BoxTracker`) | **Easy** | Pure C++, no SIMD, no platform deps |
+| Eigen | **Trivial** | Header-only |
+| Protobuf | **Easy** | Standard CMake cross-compile |
+| Abseil | **Easy** | Standard CMake cross-compile |
+| OpenCV (full) | **Medium** | Cross-compile from source; module selection matters |
+| OpenCV (minimal, no video) | **Easy** | Only core + imgproc if flow is precomputed |
+| Bazel build system | **Medium** | Custom RISC-V toolchain config needed |
+| Threading (`ParallelInvoker`) | **Easy** | Can be disabled for single-core targets |
+
+Overall, this module is **well-suited for RISC-V porting** because it relies entirely on classical algorithms with no neural network inference, no platform-specific SIMD, and well-established cross-compilable dependencies.
