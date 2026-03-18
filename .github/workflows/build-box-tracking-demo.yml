@@ -10,6 +10,7 @@ on:
     paths:
       - 'box_tracking_demo/**'
       - '.github/workflows/build-box-tracking-demo.yml'
+  workflow_dispatch:
 
 jobs:
   build-ubuntu:
